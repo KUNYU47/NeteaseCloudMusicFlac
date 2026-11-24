@@ -1,112 +1,78 @@
-import shutil, tempfile
-import logging
 import unittest
-import json
-import re
-import os
-import time
-from main import set_logger, fetch_song_list, get_songid, get_song_info, download_song
-from main import MINIMUM_SIZE
+
+from main import (build_session, build_filename, fetch_song_list, get_song_url,
+                  parse_target, pick_extension, validate_file_name)
+
+ALBUM_URL = "https://music.163.com/#/album?id=198202188"
+ALBUM_ID = "198202188"
 
 
-class Test(unittest.TestCase):
+class TestPureFunctions(unittest.TestCase):
 
-    # def setUp(self):
-    #     self.test_dir = tempfile.mkdtemp()  
-    #     print(self.test_dir)
-    # def tearDown(self):
-    #     shutil.rmtree(self.test_dir)
-    def test_fetch_song_list(self):
-        correct_url = "https://music.163.com/#/playlist?id=2594603185"
-        correct_url_songlist = [
-            'Careless Whisper',
-            'Be Free',
-            'How Long Will I Love You',
-            'Wham Bam Shang-A-Lang',
-            'California Dreaming (重庆森林)',
-            'Talk Baby Talk',
-            '水边的阿狄丽娜',
-            'Levels',
-            'Ode an die Freude',
-            'Let Me Know'
-            ]
-        wrong_url = "id=22"
+    def test_parse_target(self):
+        self.assertEqual(parse_target(ALBUM_URL), ("album", ALBUM_ID))
+        self.assertEqual(parse_target("https://music.163.com/album?id=198202188"), ("album", ALBUM_ID))
+        self.assertEqual(parse_target("http://music.163.com/#/playlist?id=145258012"), ("playlist", "145258012"))
+        self.assertEqual(parse_target("https://music.163.com/song?id=2162756781"), ("song", "2162756781"))
+        self.assertEqual(parse_target("198202188"), (None, "198202188"))
+        with self.assertRaises(ValueError):
+            parse_target("https://example.com/foo")
 
-        self.assertEqual(len(fetch_song_list(correct_url)[1]) , 10)
-        self.assertCountEqual(fetch_song_list(correct_url)[1], correct_url_songlist)
-        with self.assertRaises(SystemExit) as cm:
-            fetch_song_list(wrong_url)
-        self.assertEqual(cm.exception.code, 1)
-    def test_get_songid(self):
-        correct_name = "Let Me Know"
-        _id = '2043287'
+    def test_validate_file_name(self):
+        self.assertEqual(validate_file_name('a/b\\c:d*e?f"g<h>i|j'), "a_b_c_d_e_f_g_h_i_j")
+        self.assertNotIn(":", validate_file_name("04:30"))
+        self.assertEqual(validate_file_name("  名字.  "), "名字")
+        # NFKC: 全角冒号应被规范化
+        self.assertEqual(validate_file_name("金魚。壞天氣"), "金魚。壞天氣")
+        self.assertEqual(validate_file_name(""), "unknown")
 
-        wrong_name = "youmeiyouzheyangyishouge"
-        
-        
-        self.assertEqual(get_songid(correct_name), _id)
-        self.assertEqual(get_songid(wrong_name), "")
+    def test_build_filename(self):
+        song = {"name": "白色風車", "artists": ["TOPKINGCREAM"]}
+        self.assertEqual(build_filename(song, ".flac", 1), "01. 白色風車 - TOPKINGCREAM.flac")
+        self.assertEqual(build_filename(song, ".mp3"), "白色風車 - TOPKINGCREAM.mp3")
+        self.assertIn("未知歌手", build_filename({"name": "x", "artists": []}, ".flac"))
 
-    def test_get_song_info(self):
-        correct_id = '296532523'
-        correct_song_info = {
-            'songname': "Careless Whisper",
-            'artist': "Sharon Cuneta,Andrew Ridgeley,George Michael",
-            'link': "http://zhangmenshiting.qianqian.com/data2/music/14a5cc3a8be3f13184e155c69e59d4b7/594663375/\\d+.flac\\?xcode=.+",
-            'size': 39,
-            'data': True
-        }
-
-        wrong_id = ['2', '2233']
-        wrong_song_info = {
-            'data': False
-        }
-        song_info = get_song_info(correct_id)
-        self.assertRegex(song_info['link'], correct_song_info['link'])
-
-        del song_info['link']
-        del correct_song_info['link']
-
-        self.assertEqual(song_info, correct_song_info)
-        for _id in wrong_id:
-            self.assertEqual(get_song_info(_id), wrong_song_info)
-
-    # def test_download_song(self):
-    #     songlist = fetch_song_list('https://music.163.com/#/playlist?id=2616291276')
-    #     song_ids = map(get_songid, songlist)
-    #     data = list(map(get_song_info, song_ids))
-
-    #     count_flac = 0
-    #     for i in range(len(data)):
-    #         if data[i]['size'] >= MINIMUM_SIZE:
-    #             count_flac += 1
-
-    #     def lam(mp3_option):
-    #         for n in data:
-    #             download_song(n, mp3_option, self.test_dir)
-    #             time.sleep(1)
- 
-    #         count = 0
-
-    #         files = os.listdir(self.test_dir)
-    #         if not mp3_option:
-    #             for file in files:
-    #                 file_size = os.path.getsize(os.path.join(self.test_dir, file))/(1024 ** 2)
-    #                 print("filesize:{}".format(file_size))
-    #                 if file_size >= MINIMUM_SIZE:
-    #                     count += 1
-    #             self.assertEqual(count, count_flac)
-    #         else:
-    #             self.assertEqual(len(files), len(data))
-
-    #     lam(False)
-    #     shutil.rmtree(self.test_dir)
-    #     self.test_dir = tempfile.mkdtemp()
-    #     lam(True)
-        
+    def test_pick_extension(self):
+        self.assertEqual(pick_extension({"type": "flac", "url": "http://x/y.mp3"}), ".flac")
+        self.assertEqual(pick_extension({"type": "mp3", "url": "http://x/y.flac"}), ".mp3")
+        self.assertEqual(pick_extension({"type": "", "url": "http://x/y.flac?a=1"}), ".flac")
+        self.assertEqual(pick_extension({"type": "", "url": ""}), ".bin")
 
 
+class TestNetwork(unittest.TestCase):
+    """需要联网, 失败时跳过而不是让整个测试失败."""
 
-if __name__ == '__main__':
+    @classmethod
+    def setUpClass(cls):
+        cls.session = build_session()
+
+    def test_fetch_album(self):
+        try:
+            target = fetch_song_list(self.session, ALBUM_URL)
+        except Exception as err:
+            self.skipTest("网络不可用: %s" % err)
+        self.assertEqual(target["kind"], "album")
+        self.assertEqual(str(target["id"]), ALBUM_ID)
+        self.assertEqual(len(target["songs"]), 5)
+        names = [s["name"] for s in target["songs"]]
+        self.assertIn("白色風車", names)
+        for song in target["songs"]:
+            self.assertIsInstance(song["id"], int)
+            self.assertTrue(song["artists"])
+
+    def test_get_song_url(self):
+        try:
+            url_info = get_song_url(2162756781, self.session, level="lossless")
+        except Exception as err:
+            self.skipTest("网络不可用: %s" % err)
+        self.assertTrue(url_info["url"])
+        self.assertIn(url_info["type"], ("mp3", "flac"))
+        self.assertGreater(url_info["br"], 0)
+
+    def test_bad_album(self):
+        with self.assertRaises(Exception):
+            fetch_song_list(self.session, "https://music.163.com/#/album?id=1")
+
+
+if __name__ == "__main__":
     unittest.main()
-

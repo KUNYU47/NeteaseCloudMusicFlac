@@ -1,2 +1,6 @@
 /songs_dir/
 comment_main.py
+cookie.txt
+download.log
+*.part
+__pycache__/
